@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>영화 티어리스트 메이커</title>
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- html2canvas (PNG 저장 CDN) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- SortableJS (드래그 앤 드롭 CDN) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <!-- Supabase JS Client (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        .tier-row {
+            min-height: 110px;
+        }
+        .movie-card {
+            touch-action: none;
+            cursor: grab;
+        }
+        .movie-card:active {
+            cursor: grabbing;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-sans flex flex-col selection:bg-red-500 selection:text-white">
+
+    <!-- Header -->
+    <header class="bg-gray-900/90 backdrop-blur-md border-b border-gray-800 sticky top-0 z-40 shadow-xl">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🎬</span>
+                <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-red-500 via-orange-400 to-amber-400 bg-clip-text text-transparent">
+                    영화 티어리스트
+                </h1>
+                <span id="readOnlyBadge" class="hidden bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs px-2.5 py-1 rounded-full font-medium">
+                    👁️ 읽기 전용 모드
+                </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+                <button id="btnOpenAddMovie" class="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow">
+                    ➕ 영화 직접 추가
+                </button>
+                <button id="btnSettings" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-sm font-medium rounded-lg border border-gray-700 transition-colors flex items-center gap-1.5">
+                    ⚙️ Supabase 설정
+                </button>
+                <button id="btnExportImage" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow">
+                    📷 PNG 저장
+                </button>
+                <button id="btnSaveShare" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow">
+                    🔗 공유 링크 생성
+                </button>
+                <button id="btnReset" class="px-3 py-1.5 bg-rose-900/60 hover:bg-rose-600 text-rose-200 hover:text-white text-sm font-medium rounded-lg transition-colors border border-rose-700/50">
+                    🔄 초기화
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-7xl w-full mx-auto p-4 space-y-6">
+
+        <!-- Storage Status Banner -->
+        <div id="storageNotice" class="bg-gray-900 border border-gray-800 rounded-xl p-3 text-xs text-gray-400 flex items-center justify-between gap-3">
+            <div class="flex items-center gap-2">
+                <span id="storageIcon">💾</span>
+                <span id="storageStatusText">현재 데이터는 **로컬 저장소**에 보관됩니다. Supabase를 설정하면 클라우드 저장 및 단축 공유 링크를 이용할 수 있습니다.</span>
+            </div>
+            <button id="btnNoticeConfig" class="text-blue-400 hover:underline font-semibold whitespace-nowrap">설정하기</button>
+        </div>
+
+        <!-- Tier Board Section -->
+        <section id="tierBoardContainer" class="bg-gray-900 border border-gray-800 rounded-2xl p-4 md:p-6 shadow-2xl space-y-4">
+            <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+                <h2 class="text-lg font-bold text-gray-100 flex items-center gap-2">
+                    🏆 영화 티어 보드
+                </h2>
+                <button id="btnAddTier" class="text-xs bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded-lg border border-gray-700 transition font-medium">
+                    ➕ 티어 행 추가
+                </button>
+            </div>
+
+            <!-- Tier Board Area -->
+            <div id="tierBoard" class="space-y-2 rounded-xl overflow-hidden bg-gray-950 p-2 border border-gray-800">
+                <!-- 티어 행들이 동적으로 추가됩니다 -->
+            </div>
+        </section>
+
+        <!-- Unassigned Movie Pool Section -->
+        <section id="poolSection" class="bg-gray-900 border border-gray-800 rounded-2xl p-4 md:p-6 shadow-xl space-y-4">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <h2 class="text-lg font-bold text-gray-200">📦 미배치 영화 대기열</h2>
+                    <span id="poolCount" class="bg-gray-800 text-gray-400 text-xs px-2.5 py-0.5 rounded-full font-semibold">0개</span>
+                </div>
+                <div class="w-full sm:w-64">
+                    <input type="text" id="poolFilterInput" placeholder="대기열 내 제목/장르 검색..." 
+                           class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500">
+                </div>
+            </div>
+
+            <!-- Movie Pool Container -->
+            <div id="moviePool" class="tier-row bg-gray-950/60 border-2 border-dashed border-gray-800 rounded-xl p-3 flex flex-wrap gap-3 items-center min-h-[130px] custom-scrollbar">
+                <!-- 미배치 영화 카드들이 삽입됩니다 -->
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 border-t border-gray-800 py-4 text-center text-xs text-gray-500">
+        <p>Movie Tier List Maker • Powered by Supabase & LocalStorage</p>
+    </footer>
+
+    <!-- Modal: Add Custom Movie -->
+    <div id="addMovieModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 hidden backdrop-blur-sm">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+                <h3 class="text-lg font-bold text-gray-100">🎬 새 영화 직접 추가</h3>
+                <button class="btnCloseModal text-gray-400 hover:text-white text-xl font-bold">&times;</button>
+            </div>
+
+            <form id="addMovieForm" class="space-y-4 text-sm">
+                <div>
+                    <label class="block text-gray-300 font-medium mb-1">영화 제목 <span class="text-red-500">*</span></label>
+                    <input type="text" id="movieTitleInput" required placeholder="예: 인셉션" 
+                           class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-red-500">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-gray-300 font-medium mb-1">개봉 연도</label>
+                        <input type="number" id="movieYearInput" placeholder="예: 2010" min="1800" max="2100"
+                               class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-red-500">
+                    </div>
+                    <div>
+                        <label class="block text-gray-300 font-medium mb-1">장르</label>
+                        <input type="text" id="movieGenreInput" placeholder="예: SF / 액션" 
+                               class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-red-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 font-medium mb-1">포스터 이미지 방식</label>
+                    <div class="flex gap-4 mb-2 text-xs text-gray-300">
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="imageSource" value="url" checked class="accent-red-500"> 이미지 URL
+                        </label>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="radio" name="imageSource" value="file" class="accent-red-500"> 이미지 파일 업로드
+                        </label>
+                    </div>
+
+                    <div id="urlInputContainer">
+                        <input type="url" id="moviePosterUrlInput" placeholder="https://example.com/poster.jpg" 
+                               class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-red-500">
+                    </div>
+
+                    <div id="fileInputContainer" class="hidden">
+                        <input type="file" id="moviePosterFileInput" accept="image/*" 
+                               class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-400 file:mr-3 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-800 file:text-gray-200 hover:file:bg-gray-700">
+                    </div>
+                </div>
+
+                <div class="pt-2 flex justify-end gap-2">
+                    <button type="button" class="btnCloseModal px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-medium">취소</button>
+                    <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-medium shadow">영화 추가</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Supabase Settings -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 hidden backdrop-blur-sm">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+            <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+                <h3 class="text-lg font-bold text-gray-100">⚙️ Supabase 서버 설정</h3>
+                <button class="btnCloseSettings text-gray-400 hover:text-white text-xl font-bold">&times;</button>
+            </div>
+
+            <div class="space-y-4 text-sm">
+                <p class="text-xs text-gray-400 leading-relaxed">
+                    Supabase 프로젝트 URL과 Anon Key를 입력하시면 클라우드에 티어리스트 데이터를 안전하게 보관하고 고유 링크로 공유할 수 있습니다.
+                </p>
+
+                <div>
+                    <label class="block text-gray-300 font-medium mb-1 text-xs">Supabase Project URL</label>
+                    <input type="text" id="sbUrlInput" placeholder="https://your-project.supabase.co" 
+                           class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500">
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 font-medium mb-1 text-xs">Supabase Anon Key</label>
+                    <input type="password" id="sbKeyInput" placeholder="eyJhbGciOi..." 
+                           class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <div class="flex justify-between items-center border-t border-gray-800 pt-4">
+                <button id="btnClearConfig" class="text-xs text-rose-400 hover:underline">설정 초기화</button>
+                <div class="flex gap-2">
+                    <button class="btnCloseSettings px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-xs font-medium">취소</button>
+                    <button id="btnSaveConfig" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium shadow">저장 및 연결</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Share Link -->
+    <div id="shareModal" class="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 hidden backdrop-blur-sm">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl text-center">
+            <h3 class="text-lg font-bold text-gray-100">🔗 공유 링크가 생성되었습니다!</h3>
+            <p class="text-xs text-gray-400">아래 링크를 공유하면 누구든 읽기 전용으로 작성하신 티어리스트를 볼 수 있습니다.</p>
+            
+            <div class="flex gap-2">
+                <input type="text" id="shareUrlInput" readonly class="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none">
+                <button id="btnCopyShareUrl" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-4 py-2 rounded-lg font-medium whitespace-nowrap">
+                    복사
+                </button>
+            </div>
+
+            <div class="pt-2 flex justify-center">
+                <button id="btnCloseShareModal" class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 rounded-lg">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logic Script -->
+    <script>
+        // 기본 티어 구성
+        const DEFAULT_TIERS = [
+            { id: 'tier-S', name: 'S', color: '#ef4444' },
+            { id: 'tier-A', name: 'A', color: '#f97316' },
+            { id: 'tier-B', name: 'B', color: '#eab308' },
+            { id: 'tier-C', name: 'C', color: '#22c55e' },
+            { id: 'tier-D', name: 'D', color: '#3b82f6' },
+            { id: 'tier-F', name: 'F', color: '#a855f7' }
+        ];
+
+        // 샘플 초기 영화
+        const INITIAL_MOVIES = [
+            { id: 'm-1', title: '기생충', year: '2019', genres: '드라마 / 스릴러', poster: 'https://placehold.co/185x278/1f2937/f3f4f6?text=Parasite' },
+            { id: 'm-2', title: '인셉션', year: '2010', genres: 'SF / 액션', poster: 'https://placehold.co/185x278/1f2937/f3f4f6?text=Inception' },
+            { id: 'm-3', title: '다크 나이트', year: '2008', genres: '액션 / 범죄', poster: 'https://placehold.co/185x278/1f2937/f3f4f6?text=Dark+Knight' }
+        ];
+
+        // 상태 변수
+        let supabaseUrl = localStorage.getItem('movie_tier_sb_url') || '';
+        let supabaseKey = localStorage.getItem('movie_tier_sb_key') || '';
+        let supabaseClient = null;
+        let isReadOnly = false;
+        let uploadedBase64Image = '';
+
+        // DOM Elements
+        const tierBoard = document.getElementById('tierBoard');
+        const moviePool = document.getElementById('moviePool');
+        const poolFilterInput = document.getElementById('poolFilterInput');
+        const addMovieModal = document.getElementById('addMovieModal');
+        const settingsModal = document.getElementById('settingsModal');
+        const shareModal = document.getElementById('shareModal');
+
+        // 초기화
+        document.addEventListener('DOMContentLoaded', () => {
+            initSupabase();
+            initTiers(DEFAULT_TIERS);
+            initDefaultMovies();
+            initSortable();
+            checkUrlParams();
+            setupEventListeners();
+            autoSaveToLocal();
+        });
+
+        // 자동 저장 타이머 설정
+        function autoSaveToLocal() {
+            saveCurrentState();
+        }
+
+        // Supabase 초기화
+        function initSupabase() {
+            const statusText = document.getElementById('storageStatusText');
+            const icon = document.getElementById('storageIcon');
+
+            if (supabaseUrl && supabaseKey && window.supabase) {
+                try {
+                    supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+                    icon.textContent = '⚡';
+                    statusText.innerHTML = '현재 **Supabase 클라우드**와 연결되어 데이터 연동 및 전용 공유 링크 저장이 가능합니다.';
+                } catch (e) {
+                    console.error('Supabase 연동 실패:', e);
+                }
+            } else {
+                supabaseClient = null;
+                icon.textContent = '💾';
+                statusText.innerHTML = '현재 데이터는 **로컬 저장소**에 보관됩니다. Supabase를 설정하면 클라우드 저장 및 단축 공유 링크를 이용할 수 있습니다.';
+            }
+        }
+
+        // 기본 티어 행 초기화
+        function initTiers(tiers) {
+            tierBoard.innerHTML = '';
+            tiers.forEach(t => createTierRow(t.name, t.color, t.id));
+        }
+
+        // 기본 영화 로드 (로컬 저장소에 저장된 데이터가 없으면 제공)
+        function initDefaultMovies() {
+            const savedState = localStorage.getItem('movie_tier_current_state');
+            if (savedState) {
+                try {
+                    restoreBoardState(JSON.parse(savedState));
+                    return;
+                } catch (e) {
+                    console.error('저장된 데이터 복원 실패:', e);
+                }
+            }
+
+            INITIAL_MOVIES.forEach(m => addMovieCardToPool(m));
+        }
+
+        // 티어 행 생성
+        function createTierRow(name, color, id = 'tier-' + Date.now()) {
+            const row = document.createElement('div');
+            row.className = 'flex border border-gray-800 rounded-xl overflow-hidden bg-gray-900/90 min-h-[110px] shadow-sm';
+            row.dataset.tierId = id;
+
+            row.innerHTML = `
+                <div class="tier-label w-24 sm:w-32 flex-shrink-0 p-2 flex flex-col justify-center items-center text-gray-950 font-black text-xl sm:text-2xl select-none relative group" style="background-color: ${color}">
+                    <span class="tier-name cursor-pointer drop-shadow-sm" title="클릭하여 이름 수정">${name}</span>
+                    ${!isReadOnly ? `
+                    <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1 transition-opacity">
+                        <input type="color" value="${color}" class="color-picker w-6 h-6 rounded cursor-pointer border-0 bg-transparent">
+                        <button class="btn-del-tier text-white bg-rose-600 hover:bg-rose-700 text-xs p-1 rounded">🗑️</button>
+                    </div>
+                    ` : ''}
+                </div>
+                <div class="tier-row movie-container flex-grow p-2 flex flex-wrap gap-2.5 items-center bg-gray-900/40"></div>
+            `;
+
+            tierBoard.appendChild(row);
+
+            if (!isReadOnly) {
+                const nameSpan = row.querySelector('.tier-name');
+                const colorInput = row.querySelector('.color-picker');
+                const btnDel = row.querySelector('.btn-del-tier');
+                const labelDiv = row.querySelector('.tier-label');
+
+                nameSpan.addEventListener('click', () => {
+                    const newName = prompt('티어 이름을 입력하세요:', nameSpan.textContent);
+                    if (newName && newName.trim()) {
+                        nameSpan.textContent = newName.trim();
+                        saveCurrentState();
+                    }
+                });
+
+                colorInput.addEventListener('input', (e) => {
+                    labelDiv.style.backgroundColor = e.target.value;
+                    saveCurrentState();
+                });
+
+                btnDel.addEventListener('click', () => {
+                    if (confirm('이 티어를 삭제하시겠습니까? 안에 있는 영화 카드는 대기열로 이동합니다.')) {
+                        const container = row.querySelector('.movie-container');
+                        while (container.firstChild) {
+                            moviePool.appendChild(container.firstChild);
+                        }
+                        row.remove();
+                        updatePoolCount();
+                        saveCurrentState();
+                    }
+                });
+            }
+
+            initSortableContainer(row.querySelector('.movie-container'));
+        }
+
+        // SortableJS 드래그 앤 드롭
+        function initSortable() {
+            initSortableContainer(moviePool);
+            document.querySelectorAll('.movie-container').forEach(initSortableContainer);
+        }
+
+        function initSortableContainer(container) {
+            if (!container) return;
+            new Sortable(container, {
+                group: 'tier-list',
+                animation: 150,
+                ghostClass: 'opacity-30',
+                disabled: isReadOnly,
+                onEnd: () => {
+                    updatePoolCount();
+                    saveCurrentState();
+                }
+            });
+        }
+
+        // 대기열 수량 업데이트
+        function updatePoolCount() {
+            const count = moviePool.querySelectorAll('.movie-card').length;
+            document.getElementById('poolCount').textContent = `${count}개`;
+        }
+
+        // 대기열에 영화 추가
+        function addMovieCardToPool(movie) {
+            const card = createMovieCardElement(movie);
+            moviePool.appendChild(card);
+            updatePoolCount();
+            saveCurrentState();
+        }
+
+        // 영화 카드 DOM 생성
+        function createMovieCardElement(movie) {
+            const card = document.createElement('div');
+            card.className = 'movie-card relative w-20 sm:w-24 bg-gray-900 border border-gray-800 rounded-lg overflow-hidden shadow-md group flex-shrink-0 select-none transition hover:border-gray-600';
+            card.dataset.movieData = JSON.stringify(movie);
+
+            const posterSrc = movie.poster || 'https://placehold.co/185x278/1f2937/f3f4f6?text=No+Poster';
+
+            card.innerHTML = `
+                <img src="${posterSrc}" class="w-full h-28 sm:h-32 object-cover pointer-events-none" alt="${movie.title}" onerror="this.src='https://placehold.co/185x278/1f2937/f3f4f6?text=No+Poster'">
+                <div class="p-1.5 bg-gray-950/90 text-center border-t border-gray-800">
+                    <div class="text-[11px] font-bold text-gray-100 truncate" title="${movie.title}">${movie.title}</div>
+                    <div class="text-[9px] text-gray-400 truncate">${movie.year || '미상'} ${movie.genres ? '• ' + movie.genres : ''}</div>
+                </div>
+                ${!isReadOnly ? `
+                <button class="btn-del-card absolute top-1 right-1 bg-black/70 hover:bg-rose-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                    &times;
+                </button>
+                ` : ''}
+            `;
+
+            if (!isReadOnly) {
+                card.querySelector('.btn-del-card').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    card.remove();
+                    updatePoolCount();
+                    saveCurrentState();
+                });
+            }
+
+            return card;
+        }
+
+        // 보드 상태 수집
+        function collectBoardState() {
+            const tiers = [];
+            document.querySelectorAll('#tierBoard > div').forEach(row => {
+                const label = row.querySelector('.tier-name').textContent;
+                const color = row.querySelector('.tier-label').style.backgroundColor;
+                const movies = [];
+                
+                row.querySelectorAll('.movie-card').forEach(card => {
+                    movies.push(JSON.parse(card.dataset.movieData));
+                });
+
+                tiers.push({ label, color, movies });
+            });
+
+            const poolMovies = [];
+            moviePool.querySelectorAll('.movie-card').forEach(card => {
+                poolMovies.push(JSON.parse(card.dataset.movieData));
+            });
+
+            return { tiers, poolMovies };
+        }
+
+        // 로컬 자동 저장
+        function saveCurrentState() {
+            if (isReadOnly) return;
+            const payload = collectBoardState();
+            localStorage.setItem('movie_tier_current_state', JSON.stringify(payload));
+        }
+
+        // 보드 상태 복원
+        function restoreBoardState(state) {
+            tierBoard.innerHTML = '';
+            moviePool.innerHTML = '';
+
+            if (state.tiers) {
+                state.tiers.forEach(t => {
+                    createTierRow(t.label, t.color);
+                    const lastRow = tierBoard.lastElementChild.querySelector('.movie-container');
+                    (t.movies || []).forEach(m => {
+                        lastRow.appendChild(createMovieCardElement(m));
+                    });
+                });
+            }
+
+            if (state.poolMovies) {
+                state.poolMovies.forEach(m => {
+                    moviePool.appendChild(createMovieCardElement(m));
+                });
+            }
+
+            updatePoolCount();
+        }
+
+        // PNG 이미지 내보내기
+        async function exportToPNG() {
+            const btn = document.getElementById('btnExportImage');
+            btn.disabled = true;
+            btn.textContent = '⏳ 생성 중...';
+
+            try {
+                const boardEl = document.getElementById('tierBoardContainer');
+                
+                const canvas = await html2canvas(boardEl, {
+                    backgroundColor: '#030712',
+                    scale: 2,
+                    useCORS: true,
+                    logging: false
+                });
+
+                const link = document.createElement('a');
+                link.download = `movie-tier-list-${Date.now()}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            } catch (err) {
+                alert('이미지 저장 중 오류가 발생했습니다.');
+                console.error(err);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '📷 PNG 저장';
+            }
+        }
+
+        // 공유 링크 생성 (Supabase DB 저장 또는 URL 파라미터 Fallback)
+        async function saveAndShare() {
+            const payload = collectBoardState();
+
+            // 1. Supabase 연동 시
+            if (supabaseClient) {
+                try {
+                    const { data, error } = await supabaseClient
+                        .from('tierlists')
+                        .insert([{ data: payload }])
+                        .select();
+
+                    if (error) throw error;
+                    if (data && data[0]) {
+                        const shareUrl = `${window.location.origin}${window.location.pathname}?id=${data[0].id}`;
+                        openShareModal(shareUrl);
+                        return;
+                    }
+                } catch (err) {
+                    console.warn("Supabase 저장 오류, URL 기반 공유로 대체합니다:", err);
+                }
+            }
+
+            // 2. Fallback: Base64 URL Encoded Data
+            const jsonStr = JSON.stringify(payload);
+            const encoded = encodeURIComponent(btoa(unescape(encodeURIComponent(jsonStr))));
+            const fallbackUrl = `${window.location.origin}${window.location.pathname}?data=${encoded}`;
+            openShareModal(fallbackUrl);
+        }
+
+        // URL 접속 시 읽기 전용 모드 및 데이터 로드 검사
+        async function checkUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const id = urlParams.get('id');
+            const dataParam = urlParams.get('data');
+
+            if (id || dataParam) {
+                enableReadOnlyMode();
+
+                if (id && supabaseClient) {
+                    try {
+                        const { data, error } = await supabaseClient
+                            .from('tierlists')
+                            .select('data')
+                            .eq('id', id)
+                            .single();
+                        
+                        if (data && data.data) {
+                            restoreBoardState(data.data);
+                            return;
+                        }
+                    } catch (err) {
+                        console.error('Supabase 공유 데이터 로드 실패:', err);
+                    }
+                }
+
+                if (dataParam) {
+                    try {
+                        const jsonStr = decodeURIComponent(escape(atob(decodeURIComponent(dataParam))));
+                        const parsed = JSON.parse(jsonStr);
+                        restoreBoardState(parsed);
+                    } catch (e) {
+                        console.error('URL Data 파싱 실패:', e);
+                    }
+                }
+            }
+        }
+
+        // 읽기 전용 모드 활성화
+        function enableReadOnlyMode() {
+            isReadOnly = true;
+            document.getElementById('readOnlyBadge').classList.remove('hidden');
+            document.getElementById('btnOpenAddMovie').classList.add('hidden');
+            document.getElementById('btnAddTier').classList.add('hidden');
+            document.getElementById('btnReset').classList.add('hidden');
+        }
+
+        // 공유 모달 열기
+        function openShareModal(url) {
+            document.getElementById('shareUrlInput').value = url;
+            shareModal.classList.remove('hidden');
+        }
+
+        // 이벤트 리스너 등록
+        function setupEventListeners() {
+            // 이미지 입력 방식 변경 (URL vs 파일)
+            document.querySelectorAll('input[name="imageSource"]').forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    if (e.target.value === 'url') {
+                        document.getElementById('urlInputContainer').classList.remove('hidden');
+                        document.getElementById('fileInputContainer').classList.add('hidden');
+                    } else {
+                        document.getElementById('urlInputContainer').classList.add('hidden');
+                        document.getElementById('fileInputContainer').classList.remove('hidden');
+                    }
+                });
+            });
+
+            // 포스터 이미지 파일 업로드 처리 (Base64 변환)
+            document.getElementById('moviePosterFileInput').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(evt) {
+                        uploadedBase64Image = evt.target.result;
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            // 영화 직접 추가 폼 제출
+            document.getElementById('addMovieForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const title = document.getElementById('movieTitleInput').value.trim();
+                const year = document.getElementById('movieYearInput').value.trim();
+                const genres = document.getElementById('movieGenreInput').value.trim();
+                const imgSource = document.querySelector('input[name="imageSource"]:checked').value;
+
+                let poster = '';
+                if (imgSource === 'url') {
+                    poster = document.getElementById('moviePosterUrlInput').value.trim();
+                } else {
+                    poster = uploadedBase64Image;
+                }
+
+                if (!poster) {
+                    poster = `https://placehold.co/185x278/1f2937/f3f4f6?text=${encodeURIComponent(title)}`;
+                }
+
+                addMovieCardToPool({
+                    id: 'custom-' + Date.now(),
+                    title,
+                    year,
+                    genres,
+                    poster
+                });
+
+                // 폼 초기화 및 모달 닫기
+                document.getElementById('addMovieForm').reset();
+                uploadedBase64Image = '';
+                document.getElementById('urlInputContainer').classList.remove('hidden');
+                document.getElementById('fileInputContainer').classList.add('hidden');
+                addMovieModal.classList.add('hidden');
+            });
+
+            // 모달 조작
+            document.getElementById('btnOpenAddMovie').addEventListener('click', () => {
+                addMovieModal.classList.remove('hidden');
+            });
+
+            document.querySelectorAll('.btnCloseModal').forEach(btn => {
+                btn.addEventListener('click', () => addMovieModal.classList.add('hidden'));
+            });
+
+            document.getElementById('btnSettings').addEventListener('click', () => {
+                document.getElementById('sbUrlInput').value = supabaseUrl;
+                document.getElementById('sbKeyInput').value = supabaseKey;
+                settingsModal.classList.remove('hidden');
+            });
+
+            document.getElementById('btnNoticeConfig').addEventListener('click', () => {
+                document.getElementById('btnSettings').click();
+            });
+
+            document.querySelectorAll('.btnCloseSettings').forEach(btn => {
+                btn.addEventListener('click', () => settingsModal.classList.add('hidden'));
+            });
+
+            // Supabase 설정 저장
+            document.getElementById('btnSaveConfig').addEventListener('click', () => {
+                supabaseUrl = document.getElementById('sbUrlInput').value.trim();
+                supabaseKey = document.getElementById('sbKeyInput').value.trim();
+
+                localStorage.setItem('movie_tier_sb_url', supabaseUrl);
+                localStorage.setItem('movie_tier_sb_key', supabaseKey);
+
+                initSupabase();
+                settingsModal.classList.add('hidden');
+                alert('Supabase 설정이 저장되었습니다.');
+            });
+
+            // Supabase 설정 초기화
+            document.getElementById('btnClearConfig').addEventListener('click', () => {
+                if (confirm('Supabase 설정을 초기화하시겠습니까?')) {
+                    localStorage.removeItem('movie_tier_sb_url');
+                    localStorage.removeItem('movie_tier_sb_key');
+                    supabaseUrl = '';
+                    supabaseKey = '';
+                    initSupabase();
+                    settingsModal.classList.add('hidden');
+                }
+            });
+
+            // 대기열 필터링
+            poolFilterInput.addEventListener('input', (e) => {
+                const query = e.target.value.toLowerCase().trim();
+                moviePool.querySelectorAll('.movie-card').forEach(card => {
+                    const data = JSON.parse(card.dataset.movieData);
+                    const matchTitle = data.title.toLowerCase().includes(query);
+                    const matchGenre = (data.genres || '').toLowerCase().includes(query);
+                    card.style.display = (matchTitle || matchGenre) ? 'block' : 'none';
+                });
+            });
+
+            // 기타 액션 버튼들
+            document.getElementById('btnAddTier').addEventListener('click', () => {
+                const name = prompt('새 티어 이름을 입력하세요:', 'NEW');
+                if (name && name.trim()) {
+                    createTierRow(name.trim(), '#6b7280');
+                    saveCurrentState();
+                }
+            });
+
+            document.getElementById('btnExportImage').addEventListener('click', exportToPNG);
+            document.getElementById('btnSaveShare').addEventListener('click', saveAndShare);
+
+            document.getElementById('btnCopyShareUrl').addEventListener('click', () => {
+                const input = document.getElementById('shareUrlInput');
+                input.select();
+                navigator.clipboard.writeText(input.value);
+                alert('링크가 클립보드에 복사되었습니다!');
+            });
+
+            document.getElementById('btnCloseShareModal').addEventListener('click', () => {
+                shareModal.classList.add('hidden');
+            });
+
+            document.getElementById('btnReset').addEventListener('click', () => {
+                if (confirm('전체 티어보드가 초기화됩니다. 계속하시겠습니까?')) {
+                    localStorage.removeItem('movie_tier_current_state');
+                    initTiers(DEFAULT_TIERS);
+                    moviePool.innerHTML = '';
+                    INITIAL_MOVIES.forEach(m => addMovieCardToPool(m));
+                }
+            });
+        }
+    </script>
+</body>
+</html>
